@@ -1,0 +1,135 @@
+import { useState, useCallback } from "react";
+import { AccountInfo } from "./components/AccountInfo";
+import { BetHistory } from "./components/BetHistory";
+import { MetricsGrid } from "./components/MetricsGrid";
+import { SignalAnalysis } from "./components/SignalAnalysis";
+import { TopBar } from "./components/TopBar";
+import { TradingPanel } from "./components/TradingPanel";
+import { WalletBar } from "./components/WalletBar";
+import { useDashboard } from "./hooks/useDashboard";
+import { canAffordAmount, canPlaceTrade } from "./utils/trade";
+
+export default function BTCPredictionBot() {
+  const [botActive, setBotActive] = useState(true);
+  const [betSize, setBetSize] = useState(10);
+  const [minConf, setMinConf] = useState(65);
+
+  const {
+    signals,
+    history,
+    countdown,
+    balanceUsd,
+    balanceError,
+    tradingEnabled,
+    winRate,
+    sessionPnl,
+    resolvedCount,
+    error,
+    placingBet,
+    placeBet,
+    copyTrade,
+    copying,
+    priceToBeat,
+    btcVsBeatPct,
+    demoMode,
+    demoBalance,
+    canTradeLive,
+    canTradeDemo,
+    wsConnected,
+    account,
+    toggleDemoMode,
+    toggleAutoCopy,
+    updateCopyBetSize,
+    updateCopyTarget,
+    copyNow,
+  } = useDashboard(botActive);
+
+  const canBet =
+    signals.composite >= minConf &&
+    canAffordAmount(demoMode, demoBalance, balanceUsd, betSize) &&
+    canPlaceTrade(demoMode, canTradeDemo, canTradeLive);
+
+  const handlePlaceBet = useCallback(async () => {
+    if (!canBet) return;
+    const direction = signals.isUp ? "UP" : "DOWN";
+    await placeBet(direction, betSize, signals.composite);
+  }, [signals.composite, signals.isUp, betSize, placeBet, canBet]);
+
+  const copySize = copyTrade.settings.betSize;
+  const canCopy =
+    !!copyTrade.prediction &&
+    canAffordAmount(demoMode, demoBalance, balanceUsd, copySize) &&
+    canPlaceTrade(demoMode, canTradeDemo, canTradeLive);
+
+  return (
+    <div className="min-h-screen bg-pm-bg px-5 py-6 space-y-3 font-mono text-pm-text">
+      <TopBar botActive={botActive} onToggle={() => setBotActive((a) => !a)} />
+
+      {error && (
+        <div className="px-4 py-2 text-xs tracking-wide text-red-400">
+          {error}
+        </div>
+      )}
+
+      <WalletBar
+        balanceUsd={balanceUsd}
+        balanceError={balanceError}
+        demoMode={demoMode}
+        demoBalance={demoBalance}
+        wsConnected={wsConnected}
+        tradingEnabled={tradingEnabled}
+        onToggleDemo={toggleDemoMode}
+      />
+
+      <MetricsGrid
+        btc={signals.btc}
+        btcChange={signals.btcChange}
+        priceToBeat={priceToBeat}
+        btcVsBeatPct={btcVsBeatPct}
+        balanceUsd={balanceUsd}
+        demoMode={demoMode}
+        demoBalance={demoBalance}
+        winRate={winRate}
+        resolvedCount={resolvedCount}
+        pnl={sessionPnl}
+        countdown={countdown}
+      />
+
+      <div className="grid grid-cols-2 items-stretch gap-3">
+        <div className="flex min-h-full flex-col gap-3">
+          <AccountInfo
+            account={account}
+            balanceUsd={balanceUsd}
+            balanceError={balanceError}
+            tradingEnabled={tradingEnabled}
+            demoMode={demoMode}
+            demoBalance={demoBalance}
+          />
+          <SignalAnalysis signals={signals} />
+        </div>
+        <div className="flex min-h-full">
+          <TradingPanel
+            signals={signals}
+            betSize={betSize}
+            minConf={minConf}
+            placingBet={placingBet}
+            canBet={canBet}
+            demoMode={demoMode}
+            copyTrade={copyTrade}
+            canCopy={canCopy}
+            copying={copying}
+            onBetSizeChange={setBetSize}
+            onMinConfChange={setMinConf}
+            onPlaceBet={handlePlaceBet}
+            onToggleAutoCopy={toggleAutoCopy}
+            onCopyBetSizeChange={updateCopyBetSize}
+            onCopyTargetChange={updateCopyTarget}
+            onCopyNow={() => copyNow(true)}
+          />
+        </div>
+      </div>
+
+      <BetHistory history={history} />
+    </div>
+  );
+}
