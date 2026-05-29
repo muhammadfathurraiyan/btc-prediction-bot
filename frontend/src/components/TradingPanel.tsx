@@ -28,6 +28,7 @@ interface TradingPanelProps {
   onPlaceBet: () => void;
   onToggleAutoCopy: (enabled: boolean) => void;
   onCopyBetSizeChange: (size: number) => void;
+  onCopyBudgetPctChange: (pct: number) => void;
   onCopyTargetChange: (address: string) => Promise<void>;
   onCopyNow: () => void;
 }
@@ -49,6 +50,7 @@ export function TradingPanel({
   onPlaceBet,
   onToggleAutoCopy,
   onCopyBetSizeChange,
+  onCopyBudgetPctChange,
   onCopyTargetChange,
   onCopyNow,
 }: TradingPanelProps) {
@@ -58,13 +60,27 @@ export function TradingPanel({
   const [targetInput, setTargetInput] = useState("");
   const [targetSaving, setTargetSaving] = useState(false);
   const [targetError, setTargetError] = useState<string | null>(null);
-  const { settings, prediction, lastAutoCopyError } = copyTrade;
+  const {
+    settings,
+    prediction,
+    windowTradeCount,
+    copiedCount,
+    pendingCount,
+    pendingTotalUsd,
+    plannedCopyUsd,
+    sizeScalePct,
+    lastAutoCopyError,
+  } = copyTrade;
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTargetInput(settings.targetAddress);
   }, [settings.targetAddress]);
   const copyDir = prediction?.direction;
   const copyIsUp = copyDir === "UP";
+  const targetAction =
+    prediction &&
+    `${prediction.side} ${prediction.outcome.toLowerCase() === "up" ? "UP" : "DOWN"}`;
 
   async function applyTarget() {
     const trimmed = targetInput.trim();
@@ -226,7 +242,8 @@ export function TradingPanel({
                 className="btn-ghost !flex-none shrink-0 px-3"
                 disabled={
                   targetSaving ||
-                  targetInput.trim().toLowerCase() === settings.targetAddress.toLowerCase()
+                  targetInput.trim().toLowerCase() ===
+                    settings.targetAddress.toLowerCase()
                 }
                 onClick={() => void applyTarget()}
               >
@@ -249,7 +266,7 @@ export function TradingPanel({
                 )}
               >
                 <div className="mb-1.5 text-[11px] text-pm-muted">
-                  {prediction.pseudonym} · latest BTC 5m pick
+                  {prediction.pseudonym} · {targetAction}
                 </div>
                 <div
                   className={cn(
@@ -270,9 +287,13 @@ export function TradingPanel({
                   )}
                 </div>
                 <div className="mt-1 text-[10px] text-pm-muted-dim">
-                  {formatUsd(prediction.size * prediction.price)} @{" "}
-                  {(prediction.price * 100).toFixed(0)}¢
-                  {prediction.alreadyCopied && " · already copied"}
+                  Target {formatUsd(prediction.amountUsd)}
+                  {prediction.scaledAmountUsd < prediction.amountUsd && (
+                    <> · copy {formatUsd(prediction.scaledAmountUsd)}</>
+                  )}
+                  {" → "}
+                  buy {copyDir} @ {(prediction.price * 100).toFixed(0)}¢
+                  {prediction.alreadyCopied && " · latest already copied"}
                 </div>
               </div>
             ) : (
@@ -282,6 +303,25 @@ export function TradingPanel({
             )}
           </div>
 
+          {windowTradeCount > 0 && (
+            <p className="my-2 shrink-0 text-center text-[10px] text-pm-muted-dim">
+              {windowTradeCount} target trade{windowTradeCount === 1 ? "" : "s"}{" "}
+              · {copiedCount} copied · {pendingCount} pending
+              {pendingTotalUsd > 0 && (
+                <>
+                  {" "}
+                  · target {formatUsd(pendingTotalUsd)}
+                  {plannedCopyUsd > 0 && plannedCopyUsd < pendingTotalUsd && (
+                    <> → yours {formatUsd(plannedCopyUsd)}</>
+                  )}
+                </>
+              )}
+              {sizeScalePct !== null && sizeScalePct < 100 && (
+                <> · sizing {sizeScalePct.toFixed(0)}%</>
+              )}
+            </p>
+          )}
+
           {lastAutoCopyError && (
             <p className="mb-2.5 shrink-0 text-[11px] text-pm-red">
               {lastAutoCopyError}
@@ -290,15 +330,25 @@ export function TradingPanel({
 
           <BetControls className="mt-auto shrink-0">
             <SliderRow
-              label="Copy size (USDC)"
+              label="Max per copy (USDC)"
               value={settings.betSize}
               min={1}
-              max={100}
+              max={500}
               display={formatUsd(settings.betSize)}
               onChange={onCopyBetSizeChange}
             />
-            <div className="bet-row mb-1 justify-between">
-              <span className="bet-label !w-auto">Auto-copy</span>
+            <SliderRow
+              label="Copy budget (% balance)"
+              value={settings.budgetPct}
+              min={10}
+              max={100}
+              display={`${settings.budgetPct}%`}
+              onChange={onCopyBudgetPctChange}
+            />
+            <div className="flex items-center justify-between gap-5 mb-1">
+              <span className="shrink-0 text-[11px] tracking-wide whitespace-nowrap text-pm-muted !w-auto">
+                Auto-copy
+              </span>
               <Switch checked={settings.enabled} onChange={onToggleAutoCopy} />
             </div>
             <div className="mt-3.5 flex gap-2">
@@ -315,7 +365,11 @@ export function TradingPanel({
                 disabled={!canCopy || copying}
                 onClick={onCopyNow}
               >
-                {copying ? "Copying…" : "Copy now"}
+                {copying
+                  ? "Copying…"
+                  : pendingCount > 0
+                    ? `Copy ${pendingCount} trade${pendingCount === 1 ? "" : "s"}`
+                    : "Copy now"}
               </button>
             </div>
           </BetControls>
@@ -393,8 +447,10 @@ function SliderRow({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="bet-row">
-      <span className="bet-label">{label}</span>
+    <div className="mb-2.5 flex items-center justify-between gap-5">
+      <span className="w-[150px] shrink-0 text-[11px] tracking-wide whitespace-nowrap text-pm-muted">
+        {label}
+      </span>
       <input
         type="range"
         min={min}
@@ -403,7 +459,7 @@ function SliderRow({
         step={1}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      <span className="bet-val">{display}</span>
+      <span className="min-w-0 text-[13px] font-medium text-pm-text-secondary">{display}</span>
     </div>
   );
 }

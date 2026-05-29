@@ -93,18 +93,6 @@
     @apply cursor-not-allowed opacity-50;
   }
 
-  .bet-row {
-    @apply mb-2.5 flex items-center justify-between gap-5;
-  }
-
-  .bet-label {
-    @apply w-[100px] shrink-0 text-[11px] tracking-wide whitespace-nowrap text-pm-muted;
-  }
-
-  .bet-val {
-    @apply min-w-0 text-[13px] font-medium text-pm-text-secondary;
-  }
-
   .signal-bar {
     @apply mx-2 inline-block h-[5px] w-[50%] overflow-hidden rounded-sm bg-pm-card-border;
   }

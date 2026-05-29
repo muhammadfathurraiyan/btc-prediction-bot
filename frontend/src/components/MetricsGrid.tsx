@@ -12,6 +12,8 @@ interface MetricsGridProps {
   demoBalance: number;
   winRate: number | null;
   resolvedCount: number;
+  totalBetCount: number;
+  pendingBetCount: number;
   pnl: number;
   countdown: string;
 }
@@ -26,6 +28,8 @@ export function MetricsGrid({
   demoBalance,
   winRate,
   resolvedCount,
+  totalBetCount,
+  pendingBetCount,
   pnl,
   countdown,
 }: MetricsGridProps) {
@@ -90,18 +94,22 @@ export function MetricsGrid({
         )}
       >
         <span className="text-[11px] text-pm-muted-dim">
-          {resolvedCount > 0
-            ? `last ${resolvedCount} resolved`
-            : "no resolved bets yet"}
+          {totalBetCount > 0
+            ? `${resolvedCount} of ${totalBetCount} bets resolved${
+                pendingBetCount > 0 ? ` · ${pendingBetCount} pending` : ""
+              }`
+            : "no bets yet"}
         </span>
       </MetricCard>
 
       <MetricCard
-        label="P&L (USDC)"
+        label="Net profit"
         value={formatSignedUsd(pnl)}
         valueClassName={pnl >= 0 ? "text-pm-green" : "text-pm-red"}
       >
-        <span className="text-[11px] text-pm-muted-dim">session</span>
+        <span className="text-[11px] text-pm-muted-dim">
+          all resolved bets · wins return stake + profit
+        </span>
       </MetricCard>
 
       <MetricCard

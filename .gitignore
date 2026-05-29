@@ -20,6 +20,9 @@ backend/dist/
 build/
 out/
 
+# ─── Local runtime data ───
+backend/data/
+
 # ─── Logs ───
 logs/
 *.log

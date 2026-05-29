@@ -11,7 +11,7 @@ export function BetHistory({ history }: BetHistoryProps) {
       <div className="mb-3.5 flex items-center justify-between">
         <div className="card-title !mb-0">Bet History</div>
         <span className="text-[11px] tracking-wide text-pm-muted-faint">
-          Live session · resolves after each 5m window
+          Recent bets · stats use full ledger
         </span>
       </div>
       {history.length > 0 ? (

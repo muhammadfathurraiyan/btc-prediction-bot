@@ -4,6 +4,7 @@ export interface Btc5mMarket {
   slug: string;
   windowStart: number;
   windowEnd: number;
+  eventId?: number;
   question?: string;
   upTokenId?: string;
   downTokenId?: string;
@@ -16,6 +17,7 @@ interface GammaMarket {
 }
 
 interface GammaEvent {
+  id?: string;
   slug?: string;
   title?: string;
   markets?: GammaMarket[];
@@ -51,10 +53,13 @@ export async function fetchCurrentBtc5mMarket(): Promise<Btc5mMarket | null> {
     tokenIds = [];
   }
 
+  const eventId = event.id ? Number(event.id) : undefined;
+
   return {
     slug,
     windowStart,
     windowEnd: windowStart + WINDOW_SECONDS,
+    eventId: Number.isFinite(eventId) ? eventId : undefined,
     question: market.question ?? event.title,
     upTokenId: tokenIds[0],
     downTokenId: tokenIds[1],

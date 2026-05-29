@@ -24,6 +24,8 @@ export default function BTCPredictionBot() {
     winRate,
     sessionPnl,
     resolvedCount,
+    totalBetCount,
+    pendingBetCount,
     error,
     placingBet,
     placeBet,
@@ -40,6 +42,7 @@ export default function BTCPredictionBot() {
     toggleDemoMode,
     toggleAutoCopy,
     updateCopyBetSize,
+    updateCopyBudgetPct,
     updateCopyTarget,
     copyNow,
   } = useDashboard(botActive);
@@ -55,19 +58,23 @@ export default function BTCPredictionBot() {
     await placeBet(direction, betSize, signals.composite);
   }, [signals.composite, signals.isUp, betSize, placeBet, canBet]);
 
-  const copySize = copyTrade.settings.betSize;
+  const nextCopyUsd =
+    copyTrade.prediction?.scaledAmountUsd ??
+    (copyTrade.pendingCount > 0
+      ? copyTrade.plannedCopyUsd / copyTrade.pendingCount
+      : copyTrade.settings.betSize);
   const canCopy =
-    !!copyTrade.prediction &&
-    canAffordAmount(demoMode, demoBalance, balanceUsd, copySize) &&
+    copyTrade.pendingCount > 0 &&
+    canAffordAmount(demoMode, demoBalance, balanceUsd, nextCopyUsd) &&
     canPlaceTrade(demoMode, canTradeDemo, canTradeLive);
 
   return (
     <div className="min-h-screen bg-pm-bg px-5 py-6 space-y-3 font-mono text-pm-text">
       <TopBar botActive={botActive} onToggle={() => setBotActive((a) => !a)} />
 
-      {error && (
+      {(error || copyTrade.lastAutoCopyError) && (
         <div className="px-4 py-2 text-xs tracking-wide text-red-400">
-          {error}
+          {error ?? copyTrade.lastAutoCopyError}
         </div>
       )}
 
@@ -91,6 +98,8 @@ export default function BTCPredictionBot() {
         demoBalance={demoBalance}
         winRate={winRate}
         resolvedCount={resolvedCount}
+        totalBetCount={totalBetCount}
+        pendingBetCount={pendingBetCount}
         pnl={sessionPnl}
         countdown={countdown}
       />
@@ -123,6 +132,7 @@ export default function BTCPredictionBot() {
             onPlaceBet={handlePlaceBet}
             onToggleAutoCopy={toggleAutoCopy}
             onCopyBetSizeChange={updateCopyBetSize}
+            onCopyBudgetPctChange={updateCopyBudgetPct}
             onCopyTargetChange={updateCopyTarget}
             onCopyNow={() => copyNow(true)}
           />

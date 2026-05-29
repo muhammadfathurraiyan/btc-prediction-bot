@@ -1,7 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   executeCopyTrade,
-  getCopySettings,
   normalizeTargetAddress,
   updateCopySettings,
 } from "./lib/copyTrade.js";
@@ -14,9 +13,10 @@ import { fetchBalanceUsd } from "./lib/balance.js";
 import { placeUserBet } from "./lib/betting.js";
 import { fetchCurrentBtc5mMarket } from "./lib/market.js";
 import { attachRealtime } from "./lib/realtime.js";
-import type { BetDirection } from "./lib/history.js";
+import { initHistory, type BetDirection } from "./lib/history.js";
 
 loadBackendEnv();
+initHistory();
 
 const PORT = Number(process.env.PORT ?? 3001);
 
@@ -101,6 +101,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       const body = await readJsonBody<{
         enabled?: boolean;
         betSize?: number;
+        budgetPct?: number;
         targetAddress?: string;
       }>(req);
 
@@ -117,6 +118,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       const settings = updateCopySettings({
         enabled: body.enabled,
         betSize: body.betSize,
+        budgetPct: body.budgetPct,
         targetAddress,
       });
       sendJson(res, 200, { settings });
@@ -132,18 +134,25 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         return;
       }
 
-      const settings = getCopySettings();
-      const betSize = body.betSize ?? settings.betSize;
-      const result = await executeCopyTrade(client, market, betSize, balanceUsd, {
+      if (body.betSize !== undefined) {
+        updateCopySettings({ betSize: body.betSize });
+      }
+
+      const result = await executeCopyTrade(client, market, balanceUsd, {
         force: body.force ?? false,
       });
 
-      if (!result.ok) {
+      if (!result.ok && (result.copied ?? 0) === 0) {
         sendJson(res, 400, { error: result.reason });
         return;
       }
 
-      sendJson(res, 200, { bet: result.bet });
+      sendJson(res, 200, {
+        bets: result.bets ?? [],
+        copied: result.copied ?? 0,
+        skipped: result.ok ? result.skipped : 0,
+        bet: result.bets?.[0],
+      });
       return;
     }
 

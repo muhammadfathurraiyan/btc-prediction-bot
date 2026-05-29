@@ -28,6 +28,8 @@ export interface DashboardResponse {
   winRate: number | null;
   sessionPnl: number;
   resolvedCount: number;
+  totalBetCount: number;
+  pendingBetCount: number;
   copyTrade: CopyTradeState;
   priceToBeat: number | null;
   btcVsBeatPct: number | null;

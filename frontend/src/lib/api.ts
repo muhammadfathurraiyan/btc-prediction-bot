@@ -1,6 +1,6 @@
 import type { DashboardResponse, PlaceBetResponse } from "../types/api";
 import type { Direction } from "../types";
-import type { CopySettings } from "../types/copy";
+import type { CopyExecuteResponse, CopySettings } from "../types/copy";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
@@ -50,10 +50,10 @@ export function updateCopySettingsApi(settings: Partial<CopySettings>): Promise<
   });
 }
 
-export function executeCopyTradeApi(betSize?: number, force = false): Promise<PlaceBetResponse> {
-  return request<PlaceBetResponse>("/api/copy/execute", {
+export function executeCopyTradeApi(maxCopyUsd?: number, force = false): Promise<CopyExecuteResponse> {
+  return request<CopyExecuteResponse>("/api/copy/execute", {
     method: "POST",
-    body: JSON.stringify({ betSize, force }),
+    body: JSON.stringify({ betSize: maxCopyUsd, force }),
   });
 }
 

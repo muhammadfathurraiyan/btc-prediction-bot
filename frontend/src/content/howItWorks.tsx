@@ -42,27 +42,35 @@ export function CopyTradeHowItWorksContent() {
     <>
       <DialogSection title="What it does">
         <p className="m-0">
-          Mirrors the target wallet&apos;s latest <strong>BUY</strong> on the current BTC 5m
-          Polymarket market (UP or DOWN). Your bot follows their direction, not their exact size.
+          Mirrors target transactions on the current BTC 5m window (each tx once). Copy size follows
+          their USDC amount, scaled down when your balance cannot cover the full batch — not a blind
+          100% mirror. Max per copy caps each trade; Copy budget % caps total spend per run.
         </p>
       </DialogSection>
       <DialogSection title="Target wallet">
         <p className="m-0">
-          Trades are read from Polymarket&apos;s public Data API. Only the current 5-minute window
-          slug is considered. If they haven&apos;t traded this window yet, Copy now stays disabled.
+          Trades are read from Polymarket&apos;s Data API (maker + taker fills, filtered by event).
+          If they place 9 trades, you copy up to 9 (when balance allows). BUY Up → you buy UP at
+          their $ size; SELL Up → you buy DOWN at their $ size.
+        </p>
+      </DialogSection>
+      <DialogSection title="Balance sizing">
+        <p className="m-0">
+          A reserve (10% or $5, whichever is higher) stays untouched. Copy budget % applies to the
+          rest. Pending trades share that budget proportionally to their target sizes. If they spent
+          $80 and your budget is $30, each copy is ~37.5% of their size.
         </p>
       </DialogSection>
       <DialogSection title="Auto-copy">
         <p className="m-0">
-          When enabled, each dashboard refresh checks for a new target trade and places your copy
-          automatically (once per transaction hash). Errors appear below the prediction card.
+          When enabled, each refresh copies up to 5 uncopied trades (oldest first) with scaled sizes.
+          Remaining pending trades wait for the next refresh or Copy now.
         </p>
       </DialogSection>
       <DialogSection title="Copy now">
         <p className="m-0">
-          Manually copies the latest pick immediately. Use <strong>force</strong> via the button
-          even if that trade was already copied this window. Respects demo vs live mode and balance
-          checks like signal bets.
+          Same as auto-copy for pending trades (scaled, max 5 per click). Force re-copies the latest
+          trade only if nothing is pending.
         </p>
       </DialogSection>
     </>

@@ -1,3 +1,7 @@
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { computeWinProfit } from "./betPnl.js";
 import { releaseDemoFunds } from "./demo.js";
 
 export type BetDirection = "UP" | "DOWN";
@@ -26,8 +30,16 @@ export interface SessionStats {
   totalCount: number;
 }
 
-const MAX_ENTRIES = 50;
+/** Bets shown in the UI (newest first). Stats use the full ledger. */
+const DISPLAY_LIMIT = 100;
+
+const HISTORY_FILE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../../data/bet-history.json",
+);
+
 const history: BetEntry[] = [];
+let historyLoaded = false;
 
 function formatTime(date = new Date()): string {
   const h = date.getHours();
@@ -35,8 +47,56 @@ function formatTime(date = new Date()): string {
   return `${h}:${m < 10 ? "0" : ""}${m}`;
 }
 
+function persistHistory(): void {
+  try {
+    mkdirSync(dirname(HISTORY_FILE), { recursive: true });
+    writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 0), "utf8");
+  } catch {
+    // Non-fatal: stats still work in memory for this process
+  }
+}
+
+function parseStoredHistory(raw: unknown): BetEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const valid: BetEntry[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const b = row as BetEntry;
+    if (
+      typeof b.id === "string" &&
+      (b.dir === "UP" || b.dir === "DOWN") &&
+      typeof b.amt === "number" &&
+      (b.result === "win" || b.result === "loss" || b.result === "pending")
+    ) {
+      valid.push({
+        ...b,
+        pnl: typeof b.pnl === "number" ? b.pnl : 0,
+        conf: typeof b.conf === "number" ? b.conf : 0,
+      });
+    }
+  }
+  return valid.sort((a, b) => {
+    const ta = a.windowStart ?? 0;
+    const tb = b.windowStart ?? 0;
+    if (tb !== ta) return tb - ta;
+    return b.id.localeCompare(a.id);
+  });
+}
+
+/** Load persisted bets on server start (idempotent). */
+export function initHistory(): void {
+  if (historyLoaded) return;
+  historyLoaded = true;
+  try {
+    const raw = JSON.parse(readFileSync(HISTORY_FILE, "utf8")) as unknown;
+    history.push(...parseStoredHistory(raw));
+  } catch {
+    // Missing or corrupt file — start empty
+  }
+}
+
 export function listHistory(): BetEntry[] {
-  return [...history];
+  return history.slice(0, DISPLAY_LIMIT);
 }
 
 export function addBet(
@@ -50,7 +110,7 @@ export function addBet(
     ...entry,
   };
   history.unshift(bet);
-  if (history.length > MAX_ENTRIES) history.pop();
+  persistHistory();
   return bet;
 }
 
@@ -58,10 +118,12 @@ export function updateBet(id: string, patch: Partial<Pick<BetEntry, "result" | "
   const bet = history.find((b) => b.id === id);
   if (!bet) return;
   Object.assign(bet, patch);
+  persistHistory();
 }
 
+/** Win rate and net profit from every stored bet (signals + copy, demo + live). */
 export function computeSessionStats(): SessionStats {
-  const resolved = history.filter((b) => b.result !== "pending");
+  const resolved = history.filter((b) => b.result === "win" || b.result === "loss");
   const pending = history.filter((b) => b.result === "pending");
   const wins = resolved.filter((b) => b.result === "win").length;
   const sessionPnl = Math.round(resolved.reduce((sum, b) => sum + b.pnl, 0) * 100) / 100;
@@ -79,9 +141,7 @@ export function settleBet(bet: BetEntry, outcome: BetDirection): BetEntry {
   if (bet.result !== "pending") return bet;
   const won = bet.dir === outcome;
   const entryPrice = bet.entryPrice && bet.entryPrice > 0 ? bet.entryPrice : 0.5;
-  const pnl = won
-    ? Math.round(bet.amt * ((1 / entryPrice) - 1) * 100) / 100
-    : -bet.amt;
+  const pnl = won ? computeWinProfit(bet.amt, entryPrice) : -bet.amt;
 
   bet.result = won ? "win" : "loss";
   bet.pnl = pnl;
@@ -90,6 +150,7 @@ export function settleBet(bet: BetEntry, outcome: BetDirection): BetEntry {
     releaseDemoFunds(bet.amt, pnl);
   }
 
+  persistHistory();
   return bet;
 }
 

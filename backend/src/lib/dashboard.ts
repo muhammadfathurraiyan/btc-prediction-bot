@@ -28,6 +28,8 @@ export interface DashboardSnapshot {
   winRate: number | null;
   sessionPnl: number;
   resolvedCount: number;
+  totalBetCount: number;
+  pendingBetCount: number;
   copyTrade: Awaited<ReturnType<typeof getCopyTradeState>>;
   priceToBeat: number | null;
   btcVsBeatPct: number | null;
@@ -76,7 +78,7 @@ export async function buildDashboardSnapshot(wsConnected = false): Promise<Dashb
   const canTradeDemo = demoMode && demoBalance > 0;
 
   await maybeAutoCopy(tradingClient, market, balanceUsd);
-  const copyTrade = await getCopyTradeState(market);
+  const copyTrade = await getCopyTradeState(market, balanceUsd);
 
   let priceToBeat: number | null = null;
   let btcVsBeat: number | null = null;
@@ -104,6 +106,8 @@ export async function buildDashboardSnapshot(wsConnected = false): Promise<Dashb
     winRate: stats.winRate,
     sessionPnl: stats.sessionPnl,
     resolvedCount: stats.resolvedCount,
+    totalBetCount: stats.totalCount,
+    pendingBetCount: stats.pendingCount,
     copyTrade,
     priceToBeat,
     btcVsBeatPct: btcVsBeat,

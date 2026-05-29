@@ -11,17 +11,24 @@ import type { BetEntry, Signals } from "../types";
 import type { AccountInfo, DashboardResponse, WsMessage } from "../types/api";
 import type { CopyTradeState } from "../types/copy";
 import { EMPTY_SIGNAL_BASE } from "../utils/signals";
-import { btcVsBeatPct, formatCountdown } from "../utils/time";
+import { btcVsBeatPct, formatCountdown, getCountdownSeconds } from "../utils/time";
 
 const HTTP_FALLBACK_MS = 10000;
 
 const DEFAULT_COPY_TRADE: CopyTradeState = {
   settings: {
     enabled: false,
-    betSize: 10,
-    targetAddress: "0xd950a1a89f3e61a7a9efc85a46e440ce58c15e86",
+    betSize: 100,
+    budgetPct: 50,
+    targetAddress: "0xb17a1076a5ce053bd117a6eb51b309678d26f7e6",
   },
   prediction: null,
+  windowTradeCount: 0,
+  copiedCount: 0,
+  pendingCount: 0,
+  pendingTotalUsd: 0,
+  plannedCopyUsd: 0,
+  sizeScalePct: null,
   lastAutoCopyError: null,
 };
 
@@ -44,6 +51,8 @@ export function useDashboard(active: boolean) {
   const [winRate, setWinRate] = useState<number | null>(null);
   const [sessionPnl, setSessionPnl] = useState(0);
   const [resolvedCount, setResolvedCount] = useState(0);
+  const [totalBetCount, setTotalBetCount] = useState(0);
+  const [pendingBetCount, setPendingBetCount] = useState(0);
   const [placingBet, setPlacingBet] = useState(false);
   const [copyTrade, setCopyTrade] = useState<CopyTradeState>(DEFAULT_COPY_TRADE);
   const [copying, setCopying] = useState(false);
@@ -67,6 +76,8 @@ export function useDashboard(active: boolean) {
     setWinRate(data.winRate);
     setSessionPnl(data.sessionPnl);
     setResolvedCount(data.resolvedCount);
+    setTotalBetCount(data.totalBetCount ?? data.history.length);
+    setPendingBetCount(data.pendingBetCount ?? 0);
     if (data.copyTrade) setCopyTrade(data.copyTrade);
     setPriceToBeat(data.priceToBeat);
     priceToBeatRef.current = data.priceToBeat;
@@ -160,10 +171,9 @@ export function useDashboard(active: boolean) {
   }, [active, applyDashboard]);
 
   useEffect(() => {
-    if (!active || !windowEnd) return;
+    if (!active) return;
     const tick = () => {
-      const seconds = Math.max(0, windowEnd - Math.floor(Date.now() / 1000));
-      setCountdown(formatCountdown(seconds));
+      setCountdown(formatCountdown(getCountdownSeconds(windowEnd)));
     };
     tick();
     const id = setInterval(tick, 1000);
@@ -217,6 +227,15 @@ export function useDashboard(active: boolean) {
     }
   }, []);
 
+  const updateCopyBudgetPct = useCallback(async (budgetPct: number) => {
+    setCopyTrade((prev) => ({ ...prev, settings: { ...prev.settings, budgetPct } }));
+    try {
+      await updateCopySettingsApi({ budgetPct });
+    } catch {
+      // Re-sync on next dashboard message
+    }
+  }, []);
+
   const updateCopyTarget = useCallback(async (targetAddress: string) => {
     try {
       const { settings } = await updateCopySettingsApi({ targetAddress });
@@ -238,13 +257,25 @@ export function useDashboard(active: boolean) {
     setError(null);
     try {
       const result = await executeCopyTradeApi(copyTrade.settings.betSize, force);
-      setHistory((prev) => [result.bet, ...prev]);
+      if (result.bets.length > 0) {
+        setHistory((prev) => [...result.bets, ...prev]);
+      }
+      setCopyTrade((prev) => ({
+        ...prev,
+        lastAutoCopyError: null,
+        copiedCount: prev.copiedCount + result.copied,
+        pendingCount: Math.max(0, prev.pendingCount - result.copied),
+      }));
+      const data = await fetchDashboard();
+      applyDashboard(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Copy trade failed");
+      const message = err instanceof Error ? err.message : "Copy trade failed";
+      setError(message);
+      setCopyTrade((prev) => ({ ...prev, lastAutoCopyError: message }));
     } finally {
       setCopying(false);
     }
-  }, [copyTrade.settings.betSize]);
+  }, [applyDashboard, copyTrade.settings.betSize]);
 
   return {
     signals,
@@ -258,6 +289,8 @@ export function useDashboard(active: boolean) {
     winRate,
     sessionPnl,
     resolvedCount,
+    totalBetCount,
+    pendingBetCount,
     copyTrade,
     copying,
     priceToBeat,
@@ -272,6 +305,7 @@ export function useDashboard(active: boolean) {
     toggleDemoMode,
     toggleAutoCopy,
     updateCopyBetSize,
+    updateCopyBudgetPct,
     updateCopyTarget,
     copyNow,
   };

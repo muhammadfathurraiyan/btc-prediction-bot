@@ -5,7 +5,7 @@ A full-stack dashboard for trading [Polymarket BTC 5-minute Up/Down markets](htt
 ## Features
 
 - **Signal-based betting** — Composite score from five live indicators (RSI, EMA cross, volume spike, order book depth, market UP %)
-- **Copy trading** — Mirror another wallet's latest BTC 5m BUY on the current window, with manual or auto-copy
+- **Copy trading** — Mirror another wallet's latest BTC 5m trade (BUY or SELL) on the current window, with manual or auto-copy
 - **Chainlink pricing** — Live BTC, price-to-beat, and bet resolution use Polymarket's Chainlink BTC/USD feed (not Binance spot)
 - **Demo mode** — Paper trading with $1,000 simulated USDC when live balance is insufficient or demo is toggled on
 - **Real-time dashboard** — WebSocket updates for BTC ticks and dashboard snapshots; HTTP fallback when disconnected
@@ -146,7 +146,7 @@ When ≥3 signals align, the composite score reflects conviction. Bets require y
 
 ### Copy trading
 
-Set a target wallet address (Polymarket proxy/profile address). The bot reads their latest **BUY** on the current BTC 5m slug via the Data API and mirrors UP or DOWN direction. Auto-copy runs on each dashboard refresh (once per transaction hash).
+Set a target wallet address (Polymarket proxy/profile address). The bot follows their latest **BUY or SELL** on the current BTC 5m slug (Data API, `takerOnly=false`). BUY Up → you buy UP; SELL Up → you buy DOWN. Auto-copy runs on each dashboard refresh (once per transaction hash).
 
 Default copy target can be set with `COPY_TARGET_ADDRESS` in `.env`.
 
