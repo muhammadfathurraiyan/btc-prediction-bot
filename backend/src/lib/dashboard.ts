@@ -44,7 +44,8 @@ export interface DashboardSnapshot {
 let cachedTradingClient: ClobClient | null | undefined;
 
 async function getTradingClient(): Promise<ClobClient | null> {
-  if (cachedTradingClient !== undefined) return cachedTradingClient;
+  // Re-attempt if previously failed so credentials added after startup are picked up.
+  if (cachedTradingClient !== undefined && cachedTradingClient !== null) return cachedTradingClient;
   try {
     const env = loadServerEnv(false);
     cachedTradingClient = await createTradingClientFromEnv(env);

@@ -11,15 +11,23 @@ export async function fetchPriceToBeat(windowStart: number): Promise<number | nu
   const targetMs = windowStart * 1000;
   let price = getChainlinkPriceAt(targetMs);
 
+  // Fall back to live price whenever no historical tick is available for this
+  // window — not just in the first 60 s. The window is still open so the live
+  // price is the best approximation we have.
   const nowSec = Math.floor(Date.now() / 1000);
-  if (price === null && nowSec >= windowStart && nowSec < windowStart + 60) {
+  if (price === null && nowSec >= windowStart && nowSec < windowStart + 300) {
     price = getLiveChainlinkBtcUsd();
   }
 
   if (price === null || !Number.isFinite(price) || price <= 0) return null;
 
-  cachedWindowStart = windowStart;
-  cachedPriceToBeat = price;
+  // Only cache once the window has fully elapsed so we don't lock in a
+  // mid-window live-price approximation as the permanent open price.
+  if (nowSec >= windowStart + 300) {
+    cachedWindowStart = windowStart;
+    cachedPriceToBeat = price;
+  }
+
   return price;
 }
 

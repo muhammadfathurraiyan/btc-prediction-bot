@@ -142,7 +142,7 @@ UP wins if Chainlink BTC/USD at window end is **≥** the price at window start 
 4. **Order book depth** — bid-heavy vs ask-heavy on Polymarket
 5. **Market UP %** — midpoint of UP token
 
-When ≥3 signals align, the composite score reflects conviction. Bets require your **min confidence** slider threshold.
+When ≥3 signals align, the composite score reflects conviction. predictions require your **min confidence** slider threshold.
 
 ### Copy trading
 
@@ -154,7 +154,7 @@ Default copy target can be set with `COPY_TARGET_ADDRESS` in `.env`.
 
 - Auto-enables when live balance is below bet size (unless opted out)
 - Can be toggled manually in the UI
-- Uses $1,000 paper USDC; bets resolve the same way as live
+- Uses $1,000 paper USDC; predictions resolve the same way as live
 - Session state (history, demo balance, copy settings) is in-memory and resets on backend restart
 
 ## Project structure

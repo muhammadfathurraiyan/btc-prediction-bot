@@ -95,10 +95,10 @@ export function MetricsGrid({
       >
         <span className="text-[11px] text-pm-muted-dim">
           {totalBetCount > 0
-            ? `${resolvedCount} of ${totalBetCount} bets resolved${
+            ? `${resolvedCount} of ${totalBetCount} predictions resolved${
                 pendingBetCount > 0 ? ` · ${pendingBetCount} pending` : ""
               }`
-            : "no bets yet"}
+            : "no predictions yet"}
         </span>
       </MetricCard>
 
@@ -108,7 +108,7 @@ export function MetricsGrid({
         valueClassName={pnl >= 0 ? "text-pm-green" : "text-pm-red"}
       >
         <span className="text-[11px] text-pm-muted-dim">
-          all resolved bets · wins return stake + profit
+          all resolved predictions · wins return stake + profit
         </span>
       </MetricCard>
 

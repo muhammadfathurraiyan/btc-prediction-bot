@@ -58,8 +58,10 @@ function outcomeToDirection(outcome: string): OutcomeSide {
 }
 
 /**
- * Places a copy trade with the same side semantics as the target tx.
- * History keeps a directional view (`reflectedDirection`) for existing analytics.
+ * Places a copy trade always as a BUY.
+ * - Target BUY "up"  → BUY "up"  token  (copy the long)
+ * - Target SELL "up" → BUY "down" token  (mirror the direction; we have no position to sell)
+ * History records `reflectedDirection` for analytics.
  */
 export async function placeCopyOrder(
   client: ClobClient,
@@ -70,7 +72,13 @@ export async function placeCopyOrder(
   confidence: number,
   reflectedDirection: BetDirection,
 ): Promise<{ bet: ReturnType<typeof addBet>; orderResponse: unknown }> {
-  const outcomeDir = outcomeToDirection(outcome);
+  // When target sells, mirror by buying the opposite outcome instead of selling.
+  const effectiveOutcome =
+    tradeSide === "SELL"
+      ? outcome.toLowerCase() === "up" ? "down" : "up"
+      : outcome;
+
+  const outcomeDir = outcomeToDirection(effectiveOutcome);
   const tokenId = outcomeDir === "UP" ? market.upTokenId : market.downTokenId;
   if (!tokenId) throw new Error("Market token IDs not available for this window");
 
@@ -81,10 +89,7 @@ export async function placeCopyOrder(
   ]);
 
   const mid = parseMid(midRaw);
-  const price =
-    tradeSide === "BUY"
-      ? Math.min(0.99, mid + 0.01)
-      : Math.max(0.01, Math.round((mid - 0.01) * 100) / 100);
+  const price = Math.min(0.99, mid + 0.01);
   const size = Math.max(1, Math.floor(amountUsd / price));
 
   const orderResponse = await client.createAndPostOrder(
@@ -92,7 +97,7 @@ export async function placeCopyOrder(
       tokenID: tokenId,
       price,
       size,
-      side: tradeSide === "BUY" ? Side.BUY : Side.SELL,
+      side: Side.BUY,
     },
     {
       tickSize: tickSizeRaw as TickSize,

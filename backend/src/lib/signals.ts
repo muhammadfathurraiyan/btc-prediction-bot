@@ -29,11 +29,11 @@ function sumBookSize(book: OrderBookSummary | null, side: "bids" | "asks"): numb
 }
 
 function rsiFavorsUp(rsi: number): boolean {
-  return rsi >= 45 && rsi <= 70;
+  return rsi >= 50;
 }
 
 function volumeFavorsUp(volSpike: number, changePct: number): boolean {
-  return volSpike >= 25 && changePct >= 0;
+  return volSpike >= 0 && changePct >= 0;
 }
 
 export async function buildSignals(

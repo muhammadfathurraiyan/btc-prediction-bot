@@ -55,15 +55,13 @@ export async function placeUserCopyTrade(
     throw new Error("Trading not configured. Set API credentials in backend/.env or enable demo mode.");
   }
 
-  if (tradeSide === "BUY") {
-    if (balanceUsd === null) {
-      throw new Error("Could not verify wallet balance. Enable demo mode or fix API connection.");
-    }
-    if (balanceUsd < amountUsd) {
-      throw new Error(
-        `Insufficient balance ($${balanceUsd.toFixed(2)} USDC). Deposit funds or enable demo mode.`,
-      );
-    }
+  if (balanceUsd === null) {
+    throw new Error("Could not verify wallet balance. Enable demo mode or fix API connection.");
+  }
+  if (balanceUsd < amountUsd) {
+    throw new Error(
+      `Insufficient balance ($${balanceUsd.toFixed(2)} USDC). Deposit funds or enable demo mode.`,
+    );
   }
 
   const result = await placeCopyOrder(

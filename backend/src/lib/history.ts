@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computeWinProfit } from "./betPnl.js";
@@ -50,7 +50,9 @@ function formatTime(date = new Date()): string {
 function persistHistory(): void {
   try {
     mkdirSync(dirname(HISTORY_FILE), { recursive: true });
-    writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 0), "utf8");
+    const tmp = HISTORY_FILE + ".tmp";
+    writeFileSync(tmp, JSON.stringify(history, null, 0), "utf8");
+    renameSync(tmp, HISTORY_FILE);
   } catch {
     // Non-fatal: stats still work in memory for this process
   }
@@ -87,11 +89,17 @@ function parseStoredHistory(raw: unknown): BetEntry[] {
 export function initHistory(): void {
   if (historyLoaded) return;
   historyLoaded = true;
-  try {
-    const raw = JSON.parse(readFileSync(HISTORY_FILE, "utf8")) as unknown;
-    history.push(...parseStoredHistory(raw));
-  } catch {
-    // Missing or corrupt file — start empty
+  for (const file of [HISTORY_FILE, HISTORY_FILE + ".tmp"]) {
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      const entries = parseStoredHistory(raw);
+      if (entries.length > 0) {
+        history.push(...entries);
+        return;
+      }
+    } catch {
+      // try next candidate
+    }
   }
 }
 
@@ -100,7 +108,8 @@ export function listHistory(): BetEntry[] {
 }
 
 export function addBet(
-  entry: Omit<BetEntry, "id" | "time" | "result" | "pnl"> & Partial<Pick<BetEntry, "orderId">>,
+  entry: Omit<BetEntry, "id" | "time" | "result" | "pnl"> &
+    Partial<Pick<BetEntry, "orderId">>,
 ): BetEntry {
   const bet: BetEntry = {
     id: crypto.randomUUID(),
@@ -114,7 +123,10 @@ export function addBet(
   return bet;
 }
 
-export function updateBet(id: string, patch: Partial<Pick<BetEntry, "result" | "pnl">>): void {
+export function updateBet(
+  id: string,
+  patch: Partial<Pick<BetEntry, "result" | "pnl">>,
+): void {
   const bet = history.find((b) => b.id === id);
   if (!bet) return;
   Object.assign(bet, patch);
@@ -123,13 +135,17 @@ export function updateBet(id: string, patch: Partial<Pick<BetEntry, "result" | "
 
 /** Win rate and net profit from every stored bet (signals + copy, demo + live). */
 export function computeSessionStats(): SessionStats {
-  const resolved = history.filter((b) => b.result === "win" || b.result === "loss");
+  const resolved = history.filter(
+    (b) => b.result === "win" || b.result === "loss",
+  );
   const pending = history.filter((b) => b.result === "pending");
   const wins = resolved.filter((b) => b.result === "win").length;
-  const sessionPnl = Math.round(resolved.reduce((sum, b) => sum + b.pnl, 0) * 100) / 100;
+  const resolvedPnl = resolved.reduce((sum, b) => sum + b.pnl, 0);
+  const sessionPnl = Math.round(resolvedPnl * 100) / 100;
 
   return {
-    winRate: resolved.length > 0 ? Math.round((wins / resolved.length) * 100) : null,
+    winRate:
+      resolved.length > 0 ? Math.round((wins / resolved.length) * 100) : null,
     sessionPnl,
     resolvedCount: resolved.length,
     pendingCount: pending.length,
@@ -140,7 +156,8 @@ export function computeSessionStats(): SessionStats {
 export function settleBet(bet: BetEntry, outcome: BetDirection): BetEntry {
   if (bet.result !== "pending") return bet;
   const won = bet.dir === outcome;
-  const entryPrice = bet.entryPrice && bet.entryPrice > 0 ? bet.entryPrice : 0.5;
+  const entryPrice =
+    bet.entryPrice && bet.entryPrice > 0 ? bet.entryPrice : 0.5;
   const pnl = won ? computeWinProfit(bet.amt, entryPrice) : -bet.amt;
 
   bet.result = won ? "win" : "loss";

@@ -99,7 +99,8 @@ export function tradeNotionalUsd(trade: PolymarketUserTrade): number {
 
 function targetNotionalCapped(trade: PolymarketUserTrade, maxUsd: number): number {
   const raw = tradeNotionalUsd(trade);
-  return Math.round(Math.min(maxUsd, raw > 0 ? raw : maxUsd) * 100) / 100;
+  if (raw <= 0) return 0;
+  return Math.round(Math.min(maxUsd, raw) * 100) / 100;
 }
 
 function spendableBalanceUsd(balance: number): number {
@@ -116,8 +117,9 @@ function copyBudgetUsd(balanceUsd: number | null): number {
 
 function copyAmountFromTarget(cappedTargetUsd: number, scale: number, maxUsd: number): number {
   const scaled = cappedTargetUsd * scale;
-  const capped = Math.min(maxUsd, scaled > 0 ? scaled : maxUsd);
-  return Math.round(Math.max(MIN_COPY_USD, capped) * 100) / 100;
+  const capped = Math.min(maxUsd, scaled);
+  if (capped < MIN_COPY_USD) return 0;
+  return Math.round(capped * 100) / 100;
 }
 
 interface CopyPlan {
@@ -147,14 +149,17 @@ function computeCopyPlan(pending: PolymarketUserTrade[], balanceUsd: number | nu
     return { scale: 0, amountsByHash: new Map(), targetTotalUsd, plannedTotalUsd: 0 };
   }
 
-  const scale = targetTotalUsd <= budget ? 1 : budget / targetTotalUsd;
+  const validTargets = targets.filter((t) => t.capped > 0);
+  const scale = targetTotalUsd <= budget ? 1 : targetTotalUsd > 0 ? budget / targetTotalUsd : 0;
   const amountsByHash = new Map<string, number>();
   let plannedTotalUsd = 0;
 
-  for (const t of targets) {
+  for (const t of validTargets) {
     const amount = copyAmountFromTarget(t.capped, scale, maxUsd);
-    amountsByHash.set(t.hash, amount);
-    plannedTotalUsd += amount;
+    if (amount > 0) {
+      amountsByHash.set(t.hash, amount);
+      plannedTotalUsd += amount;
+    }
   }
 
   return {
@@ -245,7 +250,13 @@ export async function fetchUserTrades(
   if (!res.ok) throw new Error(`Data API error ${res.status}`);
 
   let trades = (await res.json()) as PolymarketUserTrade[];
-  if (!eventId) trades = trades.filter((t) => t.slug === slug);
+  if (!eventId) {
+    // The Polymarket data API returns slugs without the windowStart suffix
+    // (e.g. "btc-updown-5m"), while our local slug is "btc-updown-5m-<ts>".
+    // Match on the base prefix so trades aren't silently dropped.
+    const slugBase = slug.replace(/-\d+$/, "");
+    trades = trades.filter((t) => t.slug === slug || t.slug === slugBase || t.slug.startsWith(slugBase));
+  }
 
   if (trades.length === 0) {
     trades = await fetchWindowTradesFromActivity(user, slug);
@@ -492,13 +503,19 @@ export async function executeCopyTrade(
   for (const trade of batch) {
     const remaining = getUncopiedTrades(pending);
     const plan = computeCopyPlan(remaining, balanceUsd);
-    const amount = plan.amountsByHash.get(trade.transactionHash);
 
-    if (!amount || plan.scale <= 0) {
+    if (plan.scale <= 0) {
       lastError =
         "Copy budget too low — raise balance, Copy budget %, or wait for pending to clear";
       lastAutoCopyError = lastError;
       break;
+    }
+
+    const amount = plan.amountsByHash.get(trade.transactionHash);
+    if (!amount) {
+      // Trade notional is zero or scaled below $1 minimum — mark as copied and skip.
+      copiedTxHashes.add(trade.transactionHash);
+      continue;
     }
 
     const result = await copySingleTrade(client, market, trade, amount, balanceUsd);

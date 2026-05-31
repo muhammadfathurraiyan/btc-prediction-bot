@@ -35,19 +35,20 @@ export function WalletBar({
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-pm-muted">
           LIVE BALANCE{" "}
-          <span
-            className={cn(
-              balanceUsd !== null && balanceUsd > 0
-                ? "text-pm-green"
-                : "text-pm-text",
-            )}
-          >
-            {liveLabel}
-          </span>
+          {demoBalance ? (
+            <span className="text-pm-amber">DEMO {formatUsd(demoBalance)}</span>
+          ) : (
+            <span
+              className={cn(
+                balanceUsd !== null && balanceUsd > 0
+                  ? "text-pm-green"
+                  : "text-pm-text",
+              )}
+            >
+              {liveLabel}
+            </span>
+          )}
         </span>
-        {demoMode && (
-          <span className="text-pm-amber">DEMO {formatUsd(demoBalance)}</span>
-        )}
         <span
           className={cn(
             "inline-flex items-center gap-1.5",

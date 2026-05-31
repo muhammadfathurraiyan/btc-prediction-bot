@@ -5,7 +5,7 @@ export function SignalsHowItWorksContent() {
     <>
       <DialogSection title="What it does">
         <p className="m-0">
-          Places a bet on the current Polymarket BTC 5m window using a composite score from five
+          Places a prediction on the current Polymarket BTC 5m window using a composite score from five
           live indicators. UP wins if Chainlink BTC/USD at window end is at or above the price to
           beat (Chainlink at window open).
         </p>
@@ -21,14 +21,14 @@ export function SignalsHowItWorksContent() {
       </DialogSection>
       <DialogSection title="Place bet">
         <p className="m-0">
-          The signal score must meet your <strong>min confidence</strong> slider. Bet size is in
+          The signal score must meet your <strong>min confidence</strong> slider. Prediction size is in
           USDC. In <strong>demo mode</strong>, orders are simulated with paper balance. Live mode
           sends real orders to Polymarket when your funder wallet has funds.
         </p>
       </DialogSection>
       <DialogSection title="Settlement">
         <p className="m-0">
-          Pending bets resolve after each 5m window using Chainlink BTC/USD (Polymarket oracle).
+          Pending predictions resolve after each 5m window using Chainlink BTC/USD (Polymarket oracle).
           Session P&amp;L and win
           rate update in the dashboard.
         </p>
