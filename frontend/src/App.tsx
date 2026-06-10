@@ -33,6 +33,8 @@ export default function BTCPredictionBot() {
     copying,
     priceToBeat,
     btcVsBeatPct,
+    liveBtc,
+    chainlinkError,
     demoMode,
     demoBalance,
     canTradeLive,
@@ -42,7 +44,7 @@ export default function BTCPredictionBot() {
     toggleDemoMode,
     toggleAutoCopy,
     updateCopyBetSize,
-    updateCopyBudgetPct,
+    updateCopyMirrorPct,
     updateCopyTarget,
     copyNow,
   } = useDashboard(botActive);
@@ -72,6 +74,12 @@ export default function BTCPredictionBot() {
     <div className="min-h-screen bg-pm-bg px-5 py-6 space-y-3 font-mono text-pm-text">
       <TopBar botActive={botActive} onToggle={() => setBotActive((a) => !a)} />
 
+      {chainlinkError && (
+        <div className="px-4 py-2 text-xs tracking-wide text-amber-400">
+          {chainlinkError}
+        </div>
+      )}
+
       {(error || copyTrade.lastAutoCopyError) && (
         <div className="px-4 py-2 text-xs tracking-wide text-red-400">
           {error ?? copyTrade.lastAutoCopyError}
@@ -89,10 +97,11 @@ export default function BTCPredictionBot() {
       />
 
       <MetricsGrid
-        btc={signals.btc}
+        btc={liveBtc}
         btcChange={signals.btcChange}
         priceToBeat={priceToBeat}
         btcVsBeatPct={btcVsBeatPct}
+        chainlinkError={chainlinkError}
         balanceUsd={balanceUsd}
         demoMode={demoMode}
         demoBalance={demoBalance}
@@ -132,7 +141,7 @@ export default function BTCPredictionBot() {
             onPlaceBet={handlePlaceBet}
             onToggleAutoCopy={toggleAutoCopy}
             onCopyBetSizeChange={updateCopyBetSize}
-            onCopyBudgetPctChange={updateCopyBudgetPct}
+            onCopyMirrorPctChange={updateCopyMirrorPct}
             onCopyTargetChange={updateCopyTarget}
             onCopyNow={() => copyNow(true)}
           />

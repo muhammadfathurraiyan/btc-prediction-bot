@@ -5,6 +5,11 @@ import { getDemoBalance, isDemoActive } from "./demo.js";
 import { placeUserCopyTrade } from "./betting.js";
 import type { BetDirection, BetEntry } from "./history.js";
 import type { Btc5mMarket } from "./market.js";
+import {
+  clearTargetAccountCache,
+  resolveTargetAccountUsd,
+  type TargetAccountSource,
+} from "./targetAccount.js";
 
 const MIN_COPY_USD = 1;
 /** Keep at least this much USDC (and 10% of balance) off-limits for manual bets. */
@@ -38,17 +43,17 @@ export interface CopyPrediction {
   size: number;
   price: number;
   amountUsd: number;
-  /** Planned copy size for this trade given current balance (≤ amountUsd). */
+  /** Planned copy size for this trade (proportional mirror, ≤ amountUsd). */
   scaledAmountUsd: number;
   alreadyCopied: boolean;
 }
 
 export interface CopySettings {
   enabled: boolean;
-  /** Max USDC per copied trade (target size is scaled up to this cap). */
+  /** Max USDC per copied trade. */
   betSize: number;
-  /** Share of spendable balance to allocate across pending copies this run (10–100). */
-  budgetPct: number;
+  /** % of proportional mirror to apply (1–100). 100 = full risk mirror. */
+  mirrorPct: number;
   targetAddress: string;
 }
 
@@ -58,23 +63,27 @@ export interface CopyTradeState {
   windowTradeCount: number;
   copiedCount: number;
   pendingCount: number;
-  /** Sum of target notionals for pending trades (before balance scaling). */
+  /** Sum of target notionals for pending trades. */
   pendingTotalUsd: number;
-  /** Sum of planned copy sizes for pending trades with current balance. */
+  /** Sum of planned copy sizes for pending trades. */
   plannedCopyUsd: number;
-  /** 100 = full target size; lower when balance scales copies down. */
-  sizeScalePct: number | null;
+  /** Your account as % of target (e.g. 10 = you are 10% of them). */
+  accountRatioPct: number | null;
+  yourAccountUsd: number | null;
+  targetAccountUsd: number | null;
+  targetAccountSource: TargetAccountSource;
+  /** <100 when batch is scaled down because spendable balance is insufficient. */
+  batchScalePct: number | null;
   lastAutoCopyError: string | null;
 }
 
 const copiedTxHashes = new Set<string>();
 let lastCopyWindowStart: number | null = null;
 let skipExistingOnNextSync = false;
-
 let settings: CopySettings = {
   enabled: false,
   betSize: 100,
-  budgetPct: 50,
+  mirrorPct: 100,
   targetAddress: DEFAULT_COPY_TARGET,
 };
 
@@ -97,76 +106,135 @@ export function tradeNotionalUsd(trade: PolymarketUserTrade): number {
   return Math.round(trade.size * trade.price * 100) / 100;
 }
 
-function targetNotionalCapped(trade: PolymarketUserTrade, maxUsd: number): number {
-  const raw = tradeNotionalUsd(trade);
-  if (raw <= 0) return 0;
-  return Math.round(Math.min(maxUsd, raw) * 100) / 100;
-}
-
 function spendableBalanceUsd(balance: number): number {
   const reserve = Math.max(RESERVE_MIN_USD, balance * (RESERVE_PCT / 100));
   return Math.max(0, Math.round((balance - reserve) * 100) / 100);
 }
 
-function copyBudgetUsd(balanceUsd: number | null): number {
-  const balance = effectiveBalance(balanceUsd);
-  if (balance === null || balance <= 0) return 0;
-  const spendable = spendableBalanceUsd(balance);
-  return Math.round(spendable * (settings.budgetPct / 100) * 100) / 100;
-}
+/**
+ * Proportional mirror: copy their risk %, not their dollar amount.
+ * yourSize = theirSize × (yourAccount / theirAccount) × (mirrorPct / 100)
+ */
+export function proportionalCopyUsd(
+  theirTradeUsd: number,
+  yourAccountUsd: number,
+  targetAccountUsd: number,
+  mirrorPct: number,
+  maxPerCopy: number,
+): number {
+  if (theirTradeUsd <= 0 || yourAccountUsd <= 0 || targetAccountUsd <= 0) return 0;
 
-function copyAmountFromTarget(cappedTargetUsd: number, scale: number, maxUsd: number): number {
-  const scaled = cappedTargetUsd * scale;
-  const capped = Math.min(maxUsd, scaled);
+  const accountRatio = yourAccountUsd / targetAccountUsd;
+  const proportional = theirTradeUsd * accountRatio;
+  const mirrored = proportional * (mirrorPct / 100);
+  const capped = Math.min(maxPerCopy, mirrored);
+
   if (capped < MIN_COPY_USD) return 0;
   return Math.round(capped * 100) / 100;
 }
 
+function largestTradeUsd(trades: PolymarketUserTrade[]): number {
+  if (trades.length === 0) return 0;
+  return Math.max(...trades.map(tradeNotionalUsd));
+}
+
 interface CopyPlan {
-  scale: number;
+  batchScale: number;
   amountsByHash: Map<string, number>;
   targetTotalUsd: number;
   plannedTotalUsd: number;
+  yourAccountUsd: number | null;
+  targetAccountUsd: number | null;
+  targetAccountSource: TargetAccountSource;
+  accountRatioPct: number | null;
 }
 
-function computeCopyPlan(pending: PolymarketUserTrade[], balanceUsd: number | null): CopyPlan {
-  const maxUsd = settings.betSize;
-  const budget = copyBudgetUsd(balanceUsd);
+function computeCopyPlan(
+  pending: PolymarketUserTrade[],
+  balanceUsd: number | null,
+  targetAccountUsd: number | null,
+  targetAccountSource: TargetAccountSource,
+): CopyPlan {
+  const yourAccountUsd = effectiveBalance(balanceUsd);
+  const empty: CopyPlan = {
+    batchScale: 0,
+    amountsByHash: new Map(),
+    targetTotalUsd: 0,
+    plannedTotalUsd: 0,
+    yourAccountUsd,
+    targetAccountUsd,
+    targetAccountSource,
+    accountRatioPct: null,
+  };
 
-  const targets = pending.map((t) => ({
-    hash: t.transactionHash,
-    capped: targetNotionalCapped(t, maxUsd),
-  }));
+  if (pending.length === 0) return empty;
 
   const targetTotalUsd =
-    Math.round(targets.reduce((sum, t) => sum + t.capped, 0) * 100) / 100;
+    Math.round(pending.reduce((sum, t) => sum + tradeNotionalUsd(t), 0) * 100) / 100;
 
-  if (pending.length === 0) {
-    return { scale: 1, amountsByHash: new Map(), targetTotalUsd: 0, plannedTotalUsd: 0 };
+  if (
+    yourAccountUsd === null ||
+    yourAccountUsd <= 0 ||
+    targetAccountUsd === null ||
+    targetAccountUsd <= 0
+  ) {
+    return { ...empty, targetTotalUsd };
   }
 
-  if (budget < MIN_COPY_USD) {
-    return { scale: 0, amountsByHash: new Map(), targetTotalUsd, plannedTotalUsd: 0 };
+  const accountRatioPct = Math.round((yourAccountUsd / targetAccountUsd) * 1000) / 10;
+  const spendable = spendableBalanceUsd(yourAccountUsd);
+
+  const rawAmounts = new Map<string, number>();
+  let rawTotal = 0;
+
+  for (const trade of pending) {
+    const theirUsd = tradeNotionalUsd(trade);
+    const amount = proportionalCopyUsd(
+      theirUsd,
+      yourAccountUsd,
+      targetAccountUsd,
+      settings.mirrorPct,
+      settings.betSize,
+    );
+    if (amount > 0) {
+      rawAmounts.set(trade.transactionHash, amount);
+      rawTotal += amount;
+    }
   }
 
-  const validTargets = targets.filter((t) => t.capped > 0);
-  const scale = targetTotalUsd <= budget ? 1 : targetTotalUsd > 0 ? budget / targetTotalUsd : 0;
+  if (rawTotal <= 0 || spendable < MIN_COPY_USD) {
+    return {
+      ...empty,
+      targetTotalUsd,
+      yourAccountUsd,
+      targetAccountUsd,
+      targetAccountSource,
+      accountRatioPct,
+    };
+  }
+
+  const batchScale = rawTotal <= spendable ? 1 : spendable / rawTotal;
   const amountsByHash = new Map<string, number>();
   let plannedTotalUsd = 0;
 
-  for (const t of validTargets) {
-    const amount = copyAmountFromTarget(t.capped, scale, maxUsd);
-    if (amount > 0) {
-      amountsByHash.set(t.hash, amount);
-      plannedTotalUsd += amount;
+  for (const [hash, amount] of rawAmounts) {
+    const scaled = Math.round(amount * batchScale * 100) / 100;
+    const capped = Math.min(settings.betSize, scaled);
+    if (capped >= MIN_COPY_USD) {
+      amountsByHash.set(hash, capped);
+      plannedTotalUsd += capped;
     }
   }
 
   return {
-    scale,
+    batchScale,
     amountsByHash,
     targetTotalUsd,
     plannedTotalUsd: Math.round(plannedTotalUsd * 100) / 100,
+    yourAccountUsd,
+    targetAccountUsd,
+    targetAccountSource,
+    accountRatioPct,
   };
 }
 
@@ -218,7 +286,32 @@ function activityToTrade(row: Record<string, unknown>): PolymarketUserTrade | nu
   };
 }
 
-async function fetchWindowTradesFromActivity(user: string, slug: string): Promise<PolymarketUserTrade[]> {
+function slugBase(slug: string): string {
+  return slug.replace(/-\d+$/, "");
+}
+
+/** Only trades inside this 5m window — never all historical btc-updown-5m fills. */
+function isTradeInCurrentWindow(
+  trade: PolymarketUserTrade,
+  slug: string,
+  windowStart: number,
+  windowEnd: number,
+): boolean {
+  const ts = trade.timestamp;
+  if (ts < windowStart || ts >= windowEnd) return false;
+
+  if (trade.slug === slug) return true;
+
+  const base = slugBase(slug);
+  return trade.slug === base || trade.slug === `${base}-${windowStart}`;
+}
+
+async function fetchWindowTradesFromActivity(
+  user: string,
+  slug: string,
+  windowStart: number,
+  windowEnd: number,
+): Promise<PolymarketUserTrade[]> {
   const params = new URLSearchParams({ user, limit: "500" });
   const res = await fetch(`${DATA_API_HOST}/activity?${params}`);
   if (!res.ok) throw new Error(`Data API activity error ${res.status}`);
@@ -226,10 +319,11 @@ async function fetchWindowTradesFromActivity(user: string, slug: string): Promis
   const rows = (await res.json()) as Record<string, unknown>[];
   const trades: PolymarketUserTrade[] = [];
   for (const row of rows) {
-    if (row.slug !== slug) continue;
     if (row.type && row.type !== "TRADE") continue;
     const trade = activityToTrade(row);
-    if (trade) trades.push(trade);
+    if (trade && isTradeInCurrentWindow(trade, slug, windowStart, windowEnd)) {
+      trades.push(trade);
+    }
   }
   return trades;
 }
@@ -237,29 +331,23 @@ async function fetchWindowTradesFromActivity(user: string, slug: string): Promis
 export async function fetchUserTrades(
   user: string,
   slug: string,
-  eventId?: number,
+  windowStart: number,
+  windowEnd: number,
 ): Promise<PolymarketUserTrade[]> {
   const params = new URLSearchParams({
     user,
     limit: "500",
     takerOnly: "false",
   });
-  if (eventId) params.set("eventId", String(eventId));
 
   const res = await fetch(`${DATA_API_HOST}/trades?${params}`);
   if (!res.ok) throw new Error(`Data API error ${res.status}`);
 
   let trades = (await res.json()) as PolymarketUserTrade[];
-  if (!eventId) {
-    // The Polymarket data API returns slugs without the windowStart suffix
-    // (e.g. "btc-updown-5m"), while our local slug is "btc-updown-5m-<ts>".
-    // Match on the base prefix so trades aren't silently dropped.
-    const slugBase = slug.replace(/-\d+$/, "");
-    trades = trades.filter((t) => t.slug === slug || t.slug === slugBase || t.slug.startsWith(slugBase));
-  }
+  trades = trades.filter((t) => isTradeInCurrentWindow(t, slug, windowStart, windowEnd));
 
   if (trades.length === 0) {
-    trades = await fetchWindowTradesFromActivity(user, slug);
+    trades = await fetchWindowTradesFromActivity(user, slug, windowStart, windowEnd);
   }
 
   return dedupeTrades(trades).map(enrichTradeNotional);
@@ -308,15 +396,12 @@ function buildPrediction(latest: PolymarketUserTrade, scaledAmountUsd?: number):
 function summarizeWindow(
   trades: PolymarketUserTrade[],
   balanceUsd: number | null,
-): {
-  prediction: CopyPrediction | null;
-  windowTradeCount: number;
-  copiedCount: number;
-  pendingCount: number;
-  pendingTotalUsd: number;
-  plannedCopyUsd: number;
-  sizeScalePct: number | null;
-} {
+  targetAccountUsd: number | null,
+  targetAccountSource: TargetAccountSource,
+): Omit<
+  CopyTradeState,
+  "settings" | "lastAutoCopyError"
+> {
   if (trades.length === 0) {
     return {
       prediction: null,
@@ -325,20 +410,33 @@ function summarizeWindow(
       pendingCount: 0,
       pendingTotalUsd: 0,
       plannedCopyUsd: 0,
-      sizeScalePct: null,
+      accountRatioPct: null,
+      yourAccountUsd: effectiveBalance(balanceUsd),
+      targetAccountUsd,
+      targetAccountSource,
+      batchScalePct: null,
     };
   }
 
   const pending = getUncopiedTrades(trades);
-  const plan = computeCopyPlan(pending, balanceUsd);
+  const plan = computeCopyPlan(pending, balanceUsd, targetAccountUsd, targetAccountSource);
   const latest = trades[trades.length - 1];
   const latestScaled =
     plan.amountsByHash.get(latest.transactionHash) ??
-    targetNotionalCapped(latest, settings.betSize);
+    (targetAccountUsd && plan.yourAccountUsd
+      ? proportionalCopyUsd(
+          tradeNotionalUsd(latest),
+          plan.yourAccountUsd,
+          targetAccountUsd,
+          settings.mirrorPct,
+          settings.betSize,
+        )
+      : 0);
 
-  const balance = effectiveBalance(balanceUsd);
-  const sizeScalePct =
-    balance === null ? null : Math.round(plan.scale * 1000) / 10;
+  const batchScalePct =
+    plan.batchScale > 0 && plan.batchScale < 1
+      ? Math.round(plan.batchScale * 1000) / 10
+      : null;
 
   return {
     prediction: buildPrediction(latest, latestScaled),
@@ -347,7 +445,11 @@ function summarizeWindow(
     pendingCount: pending.length,
     pendingTotalUsd: plan.targetTotalUsd,
     plannedCopyUsd: plan.plannedTotalUsd,
-    sizeScalePct,
+    accountRatioPct: plan.accountRatioPct,
+    yourAccountUsd: plan.yourAccountUsd,
+    targetAccountUsd: plan.targetAccountUsd,
+    targetAccountSource: plan.targetAccountSource,
+    batchScalePct,
   };
 }
 
@@ -355,8 +457,8 @@ export async function getTargetPrediction(
   user: string,
   market: Btc5mMarket,
 ): Promise<CopyPrediction | null> {
-  const trades = await fetchUserTrades(user, market.slug, market.eventId);
-  return summarizeWindow(trades, null).prediction;
+  const trades = await fetchUserTrades(user, market.slug, market.windowStart, market.windowEnd);
+  return summarizeWindow(trades, null, null, null).prediction;
 }
 
 export function getCopySettings(): CopySettings {
@@ -369,17 +471,16 @@ export function normalizeTargetAddress(address: string): string | null {
   return trimmed.toLowerCase() as `0x${string}`;
 }
 
-function clampBudgetPct(value: number): number {
-  return Math.min(100, Math.max(10, Math.round(value)));
+function clampMirrorPct(value: number): number {
+  return Math.min(100, Math.max(1, Math.round(value)));
 }
 
 export function updateCopySettings(partial: Partial<CopySettings>): CopySettings {
   const wasEnabled = settings.enabled;
   if (partial.enabled !== undefined) settings.enabled = partial.enabled;
   if (partial.betSize !== undefined) settings.betSize = partial.betSize;
-  if (partial.budgetPct !== undefined) settings.budgetPct = clampBudgetPct(partial.budgetPct);
+  if (partial.mirrorPct !== undefined) settings.mirrorPct = clampMirrorPct(partial.mirrorPct);
   if (!wasEnabled && settings.enabled) {
-    // Fresh start on toggle-on: ignore existing window trades and copy only new ones.
     skipExistingOnNextSync = true;
   }
   if (partial.targetAddress !== undefined) {
@@ -388,6 +489,7 @@ export function updateCopySettings(partial: Partial<CopySettings>): CopySettings
       copiedTxHashes.clear();
       lastAutoCopyError = null;
       lastCopyWindowStart = null;
+      clearTargetAccountCache();
       if (settings.enabled) skipExistingOnNextSync = true;
     }
     settings.targetAddress = next;
@@ -440,7 +542,7 @@ export async function getCopyTradeState(
   market: Btc5mMarket | null,
   balanceUsd: number | null = null,
 ): Promise<CopyTradeState> {
-  const empty = {
+  const empty: CopyTradeState = {
     settings: getCopySettings(),
     prediction: null,
     windowTradeCount: 0,
@@ -448,7 +550,11 @@ export async function getCopyTradeState(
     pendingCount: 0,
     pendingTotalUsd: 0,
     plannedCopyUsd: 0,
-    sizeScalePct: null,
+    accountRatioPct: null,
+    yourAccountUsd: effectiveBalance(balanceUsd),
+    targetAccountUsd: null,
+    targetAccountSource: null,
+    batchScalePct: null,
     lastAutoCopyError,
   };
 
@@ -457,9 +563,16 @@ export async function getCopyTradeState(
   syncCopyWindow(market);
 
   try {
-    const trades = await fetchUserTrades(settings.targetAddress, market.slug, market.eventId);
+    const trades = await fetchUserTrades(
+      settings.targetAddress,
+      market.slug,
+      market.windowStart,
+      market.windowEnd,
+    );
     applyFreshStartIfNeeded(trades);
-    const summary = summarizeWindow(trades, balanceUsd);
+    const { value: targetAccountUsd, source: targetAccountSource } =
+      await resolveTargetAccountUsd(settings.targetAddress, largestTradeUsd(trades));
+    const summary = summarizeWindow(trades, balanceUsd, targetAccountUsd, targetAccountSource);
     return {
       settings: getCopySettings(),
       ...summary,
@@ -481,8 +594,23 @@ export async function executeCopyTrade(
 ): Promise<CopyExecuteResult> {
   syncCopyWindow(market);
 
-  const trades = await fetchUserTrades(settings.targetAddress, market.slug, market.eventId);
+  const trades = await fetchUserTrades(
+    settings.targetAddress,
+    market.slug,
+    market.windowStart,
+    market.windowEnd,
+  );
   applyFreshStartIfNeeded(trades);
+
+  const { value: targetAccountUsd, source: targetAccountSource } =
+    await resolveTargetAccountUsd(settings.targetAddress, largestTradeUsd(trades));
+
+  if (!targetAccountUsd || targetAccountUsd <= 0) {
+    const reason = "Could not auto-detect target account size — wait for their first trade";
+    lastAutoCopyError = reason;
+    return { ok: false, reason };
+  }
+
   let pending = getUncopiedTrades(trades);
 
   if (pending.length === 0) {
@@ -502,18 +630,19 @@ export async function executeCopyTrade(
 
   for (const trade of batch) {
     const remaining = getUncopiedTrades(pending);
-    const plan = computeCopyPlan(remaining, balanceUsd);
+    const plan = computeCopyPlan(remaining, balanceUsd, targetAccountUsd, targetAccountSource);
 
-    if (plan.scale <= 0) {
+    if (plan.amountsByHash.size === 0 || plan.batchScale <= 0) {
       lastError =
-        "Copy budget too low — raise balance, Copy budget %, or wait for pending to clear";
+        plan.targetAccountUsd === null
+          ? "Could not auto-detect target account size"
+          : "Insufficient spendable balance for proportional copy";
       lastAutoCopyError = lastError;
       break;
     }
 
     const amount = plan.amountsByHash.get(trade.transactionHash);
     if (!amount) {
-      // Trade notional is zero or scaled below $1 minimum — mark as copied and skip.
       copiedTxHashes.add(trade.transactionHash);
       continue;
     }

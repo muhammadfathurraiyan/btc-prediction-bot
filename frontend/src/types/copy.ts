@@ -16,10 +16,8 @@ export interface CopyPrediction {
 
 export interface CopySettings {
   enabled: boolean;
-  /** Max USDC per mirrored trade (target size scaled up to this cap). */
   betSize: number;
-  /** % of spendable balance for copy batch (10–100). */
-  budgetPct: number;
+  mirrorPct: number;
   targetAddress: string;
 }
 
@@ -31,7 +29,11 @@ export interface CopyTradeState {
   pendingCount: number;
   pendingTotalUsd: number;
   plannedCopyUsd: number;
-  sizeScalePct: number | null;
+  accountRatioPct: number | null;
+  yourAccountUsd: number | null;
+  targetAccountUsd: number | null;
+  targetAccountSource: "auto" | "inferred" | null;
+  batchScalePct: number | null;
   lastAutoCopyError: string | null;
 }
 

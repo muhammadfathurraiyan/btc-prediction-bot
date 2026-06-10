@@ -33,6 +33,8 @@ export interface DashboardResponse {
   copyTrade: CopyTradeState;
   priceToBeat: number | null;
   btcVsBeatPct: number | null;
+  liveBtc: number | null;
+  chainlinkError: string | null;
   demoMode: boolean;
   demoBalance: number;
   canTradeLive: boolean;

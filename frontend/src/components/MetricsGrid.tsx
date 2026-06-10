@@ -3,10 +3,11 @@ import { cn } from "../lib/cn";
 import { formatSignedUsd, formatUsd } from "../utils/formatPrice";
 
 interface MetricsGridProps {
-  btc: number;
+  btc: number | null;
   btcChange: string;
   priceToBeat: number | null;
   btcVsBeatPct: number | null;
+  chainlinkError?: string | null;
   balanceUsd: number | null;
   demoMode: boolean;
   demoBalance: number;
@@ -23,6 +24,7 @@ export function MetricsGrid({
   btcChange,
   priceToBeat,
   btcVsBeatPct,
+  chainlinkError,
   balanceUsd,
   demoMode,
   demoBalance,
@@ -43,26 +45,33 @@ export function MetricsGrid({
     <div className="grid grid-cols-3 gap-3">
       <MetricCard
         label="BTC Price"
-        value={formatUsd(btc)}
+        value={btc !== null ? formatUsd(btc) : "—"}
+        valueClassName={btc === null ? "text-pm-muted" : undefined}
       >
         <span className="text-[11px] text-pm-muted-dim">
           Chainlink · Polymarket
         </span>
-        <span
-          className={cn(
-            "mt-0.5 block text-[11px]",
-            beatPositive ? "text-pm-green" : "text-pm-red",
-          )}
-        >
-          {beatPositive ? "+" : ""}
-          {vsBeat.toFixed(2)}% vs beat
-        </span>
+        {btc !== null && btcVsBeatPct !== null ? (
+          <span
+            className={cn(
+              "mt-0.5 block text-[11px]",
+              beatPositive ? "text-pm-green" : "text-pm-red",
+            )}
+          >
+            {beatPositive ? "+" : ""}
+            {vsBeat.toFixed(2)}% vs beat
+          </span>
+        ) : chainlinkError ? (
+          <span className="mt-0.5 block text-[10px] text-amber-400/90">
+            RTDS unavailable
+          </span>
+        ) : null}
       </MetricCard>
 
       <MetricCard
         label="Price to beat"
         value={priceToBeat !== null ? formatUsd(priceToBeat) : "—"}
-        valueClassName="text-xl"
+        valueClassName={cn("text-xl", priceToBeat === null && "text-pm-muted")}
       >
         <span className="text-[11px] text-pm-muted-dim">
           window open (Chainlink)

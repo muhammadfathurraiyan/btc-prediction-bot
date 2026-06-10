@@ -12,6 +12,7 @@ interface PriceTick {
 
 let history: PriceTick[] = [];
 let livePrice: number | null = null;
+let lastRtdsError: string | null = null;
 let pingTimer: ReturnType<typeof setInterval> | null = null;
 
 function pushTick(timestamp: number, value: number): void {
@@ -75,8 +76,17 @@ export function getLiveChainlinkBtcUsd(): number | null {
   return livePrice;
 }
 
-/** Closest Chainlink tick at or before targetMs; falls back to nearest within 2 minutes. */
-export function getChainlinkPriceAt(targetMs: number): number | null {
+/** Human-readable RTDS/Chainlink status for the dashboard when price data is missing. */
+export function getChainlinkError(): string | null {
+  if (lastRtdsError) return `Chainlink RTDS error: ${lastRtdsError}`;
+  if (livePrice === null && history.length === 0) {
+    return "Chainlink RTDS: no BTC/USD price data received yet";
+  }
+  return null;
+}
+
+/** Closest Chainlink tick at or before targetMs; falls back to nearest within maxDiffMs. */
+export function getChainlinkPriceAt(targetMs: number, maxDiffMs = 120_000): number | null {
   if (history.length === 0) return livePrice;
 
   let atOrBefore: PriceTick | null = null;
@@ -98,7 +108,7 @@ export function getChainlinkPriceAt(targetMs: number): number | null {
   }
 
   if (atOrBefore) return atOrBefore.value;
-  if (closest && minDiff <= 120_000) return closest.value;
+  if (closest && minDiff <= maxDiffMs) return closest.value;
   return null;
 }
 
@@ -107,16 +117,12 @@ export function startChainlinkFeed(): void {
     const ws = new WebSocket(RTDS_WS);
 
     ws.on("open", () => {
+      lastRtdsError = null;
+      // Subscribe without server-side filter — some RTDS endpoints reject JSON filters.
       ws.send(
         JSON.stringify({
           action: "subscribe",
-          subscriptions: [
-            {
-              topic: "crypto_prices_chainlink",
-              type: "*",
-              filters: JSON.stringify({ symbol: CHAINLINK_SYMBOL }),
-            },
-          ],
+          subscriptions: [{ topic: "crypto_prices_chainlink", type: "*", filters: "" }],
         }),
       );
 
@@ -132,7 +138,11 @@ export function startChainlinkFeed(): void {
       pingTimer = null;
       setTimeout(connect, 3000);
     });
-    ws.on("error", () => ws.close());
+    ws.on("error", (err) => {
+      lastRtdsError = err.message;
+      console.warn("[chainlink] RTDS error:", err.message);
+      ws.close();
+    });
   };
 
   connect();

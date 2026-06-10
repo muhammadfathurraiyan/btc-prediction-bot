@@ -15,6 +15,7 @@ import { getPublicClient } from "./publicClient.js";
 import { fetchWindowOutcome, isWindowResolvable, parseWindowStartFromSlug } from "./resolve.js";
 import { buildSignals } from "./signals.js";
 import { getAccountInfo, type AccountInfo } from "./account.js";
+import { getChainlinkError, getLiveChainlinkBtcUsd } from "./chainlinkPrice.js";
 import { applyLiveChainlinkOverlay } from "./liveBtcOverlay.js";
 
 export interface DashboardSnapshot {
@@ -33,6 +34,8 @@ export interface DashboardSnapshot {
   copyTrade: Awaited<ReturnType<typeof getCopyTradeState>>;
   priceToBeat: number | null;
   btcVsBeatPct: number | null;
+  liveBtc: number | null;
+  chainlinkError: string | null;
   demoMode: boolean;
   demoBalance: number;
   canTradeLive: boolean;
@@ -83,15 +86,30 @@ export async function buildDashboardSnapshot(wsConnected = false): Promise<Dashb
 
   let priceToBeat: number | null = null;
   let btcVsBeat: number | null = null;
+  let liveBtc: number | null = null;
+  let chainlinkError: string | null = null;
   let countdownSeconds = 0;
   let signals: Awaited<ReturnType<typeof buildSignals>> | null = null;
 
   if (market) {
-    priceToBeat = await fetchPriceToBeat(market.windowStart);
     countdownSeconds = Math.max(0, market.windowEnd - Math.floor(Date.now() / 1000));
     const publicClient = getPublicClient();
     const built = await buildSignals(market, publicClient);
-    const overlay = applyLiveChainlinkOverlay(built, priceToBeat);
+    // Fetch after signals so Chainlink RTDS has time to connect on cold start.
+    liveBtc = getLiveChainlinkBtcUsd();
+    priceToBeat = await fetchPriceToBeat(market.windowStart);
+
+    if (liveBtc === null) {
+      chainlinkError =
+        getChainlinkError() ?? "Chainlink live BTC price unavailable";
+    }
+    if (priceToBeat === null) {
+      chainlinkError =
+        chainlinkError ??
+        (getChainlinkError() ?? "Chainlink price unavailable (price to beat)");
+    }
+
+    const overlay = applyLiveChainlinkOverlay(built, priceToBeat, liveBtc);
     signals = overlay.signals;
     btcVsBeat = overlay.btcVsBeatPct;
   }
@@ -112,6 +130,8 @@ export async function buildDashboardSnapshot(wsConnected = false): Promise<Dashb
     copyTrade,
     priceToBeat,
     btcVsBeatPct: btcVsBeat,
+    liveBtc,
+    chainlinkError,
     demoMode,
     demoBalance,
     canTradeLive,

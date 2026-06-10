@@ -28,7 +28,7 @@ interface TradingPanelProps {
   onPlaceBet: () => void;
   onToggleAutoCopy: (enabled: boolean) => void;
   onCopyBetSizeChange: (size: number) => void;
-  onCopyBudgetPctChange: (pct: number) => void;
+  onCopyMirrorPctChange: (pct: number) => void;
   onCopyTargetChange: (address: string) => Promise<void>;
   onCopyNow: () => void;
 }
@@ -50,7 +50,7 @@ export function TradingPanel({
   onPlaceBet,
   onToggleAutoCopy,
   onCopyBetSizeChange,
-  onCopyBudgetPctChange,
+  onCopyMirrorPctChange,
   onCopyTargetChange,
   onCopyNow,
 }: TradingPanelProps) {
@@ -68,7 +68,11 @@ export function TradingPanel({
     pendingCount,
     pendingTotalUsd,
     plannedCopyUsd,
-    sizeScalePct,
+    accountRatioPct,
+    yourAccountUsd,
+    targetAccountUsd,
+    targetAccountSource,
+    batchScalePct,
     lastAutoCopyError,
   } = copyTrade;
 
@@ -76,6 +80,7 @@ export function TradingPanel({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTargetInput(settings.targetAddress);
   }, [settings.targetAddress]);
+
   const copyDir = prediction?.direction;
   const copyIsUp = copyDir === "UP";
   const targetAction =
@@ -287,11 +292,14 @@ export function TradingPanel({
                   )}
                 </div>
                 <div className="mt-1 text-[10px] text-pm-muted-dim">
-                  Target {formatUsd(prediction.amountUsd)}
-                  {prediction.scaledAmountUsd < prediction.amountUsd && (
-                    <> · copy {formatUsd(prediction.scaledAmountUsd)}</>
-                  )}
+                  They risk {formatUsd(prediction.amountUsd)}
                   {" → "}
+                  {prediction.scaledAmountUsd > 0 ? (
+                    <>you copy {formatUsd(prediction.scaledAmountUsd)}</>
+                  ) : (
+                    <>detecting account size…</>
+                  )}
+                  {" · "}
                   buy {copyDir} @ {(prediction.price * 100).toFixed(0)}¢
                   {prediction.alreadyCopied && " · latest already copied"}
                 </div>
@@ -303,21 +311,28 @@ export function TradingPanel({
             )}
           </div>
 
-          {windowTradeCount > 0 && (
+          {accountRatioPct !== null && (
             <p className="my-2 shrink-0 text-center text-[10px] text-pm-muted-dim">
+              Your account is {accountRatioPct.toFixed(1)}% of theirs
+              {yourAccountUsd !== null && targetAccountUsd !== null && (
+                <> ({formatUsd(yourAccountUsd)} / {formatUsd(targetAccountUsd)})</>
+              )}
+              {targetAccountSource === "inferred" && " · estimated from trade size"}
+            </p>
+          )}
+
+          {windowTradeCount > 0 && (
+            <p className="mb-2 shrink-0 text-center text-[10px] text-pm-muted-dim">
               {windowTradeCount} target trade{windowTradeCount === 1 ? "" : "s"}{" "}
               · {copiedCount} copied · {pendingCount} pending
-              {pendingTotalUsd > 0 && (
+              {pendingTotalUsd > 0 && plannedCopyUsd > 0 && (
                 <>
                   {" "}
-                  · target {formatUsd(pendingTotalUsd)}
-                  {plannedCopyUsd > 0 && plannedCopyUsd < pendingTotalUsd && (
-                    <> → yours {formatUsd(plannedCopyUsd)}</>
-                  )}
+                  · they {formatUsd(pendingTotalUsd)} → you {formatUsd(plannedCopyUsd)}
                 </>
               )}
-              {sizeScalePct !== null && sizeScalePct < 100 && (
-                <> · sizing {sizeScalePct.toFixed(0)}%</>
+              {batchScalePct !== null && batchScalePct < 100 && (
+                <> · batch capped {batchScalePct.toFixed(0)}%</>
               )}
             </p>
           )}
@@ -330,20 +345,20 @@ export function TradingPanel({
 
           <BetControls className="mt-auto shrink-0">
             <SliderRow
+              label="Mirror %"
+              value={settings.mirrorPct}
+              min={1}
+              max={100}
+              display={`${settings.mirrorPct}%`}
+              onChange={onCopyMirrorPctChange}
+            />
+            <SliderRow
               label="Max per copy (USDC)"
               value={settings.betSize}
               min={1}
               max={500}
               display={formatUsd(settings.betSize)}
               onChange={onCopyBetSizeChange}
-            />
-            <SliderRow
-              label="Copy budget (% balance)"
-              value={settings.budgetPct}
-              min={10}
-              max={100}
-              display={`${settings.budgetPct}%`}
-              onChange={onCopyBudgetPctChange}
             />
             <div className="flex items-center justify-between gap-5 mb-1">
               <span className="shrink-0 text-[11px] tracking-wide whitespace-nowrap text-pm-muted !w-auto">

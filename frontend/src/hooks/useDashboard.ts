@@ -12,14 +12,17 @@ import type { AccountInfo, DashboardResponse, WsMessage } from "../types/api";
 import type { CopyTradeState } from "../types/copy";
 import { EMPTY_SIGNAL_BASE } from "../utils/signals";
 import { btcVsBeatPct, formatCountdown, getCountdownSeconds } from "../utils/time";
+import { disposeWebSocket } from "../utils/ws";
 
 const HTTP_FALLBACK_MS = 10000;
+const WS_RECONNECT_BASE_MS = 1000;
+const WS_RECONNECT_MAX_MS = 8000;
 
 const DEFAULT_COPY_TRADE: CopyTradeState = {
   settings: {
     enabled: false,
     betSize: 100,
-    budgetPct: 50,
+    mirrorPct: 100,
     targetAddress: "0xb17a1076a5ce053bd117a6eb51b309678d26f7e6",
   },
   prediction: null,
@@ -28,7 +31,11 @@ const DEFAULT_COPY_TRADE: CopyTradeState = {
   pendingCount: 0,
   pendingTotalUsd: 0,
   plannedCopyUsd: 0,
-  sizeScalePct: null,
+  accountRatioPct: null,
+  yourAccountUsd: null,
+  targetAccountUsd: null,
+  targetAccountSource: null,
+  batchScalePct: null,
   lastAutoCopyError: null,
 };
 
@@ -58,6 +65,8 @@ export function useDashboard(active: boolean) {
   const [copying, setCopying] = useState(false);
   const [priceToBeat, setPriceToBeat] = useState<number | null>(null);
   const [btcVsBeatPctState, setBtcVsBeatPct] = useState<number | null>(null);
+  const [liveBtc, setLiveBtc] = useState<number | null>(null);
+  const [chainlinkError, setChainlinkError] = useState<string | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   const [demoBalance, setDemoBalance] = useState(1000);
   const [canTradeLive, setCanTradeLive] = useState(false);
@@ -82,11 +91,13 @@ export function useDashboard(active: boolean) {
     setPriceToBeat(data.priceToBeat);
     priceToBeatRef.current = data.priceToBeat;
     setBtcVsBeatPct(data.btcVsBeatPct);
+    setLiveBtc(data.liveBtc);
+    setChainlinkError(data.chainlinkError);
     setDemoMode(data.demoMode);
     setDemoBalance(data.demoBalance);
     setCanTradeLive(data.canTradeLive);
     setCanTradeDemo(data.canTradeDemo);
-    setWsConnected(data.wsConnected);
+    // wsConnected is driven by the browser socket, not the HTTP snapshot flag.
     setAccount(data.account ?? null);
     setError(null);
   }, []);
@@ -99,13 +110,32 @@ export function useDashboard(active: boolean) {
 
     let cancelled = false;
     let fallbackTimer: ReturnType<typeof setInterval> | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempt = 0;
+
+    const scheduleReconnect = () => {
+      if (cancelled) return;
+      const delay = Math.min(
+        WS_RECONNECT_BASE_MS * 2 ** reconnectAttempt,
+        WS_RECONNECT_MAX_MS,
+      );
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(connect, delay);
+    };
 
     const connect = () => {
+      if (cancelled) return;
+
+      disposeWebSocket(wsRef.current);
+      wsRef.current = null;
+
       const ws = new WebSocket(getWsUrl());
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (!cancelled) setWsConnected(true);
+        if (cancelled) return;
+        reconnectAttempt = 0;
+        setWsConnected(true);
       };
 
       ws.onmessage = (event) => {
@@ -115,6 +145,8 @@ export function useDashboard(active: boolean) {
           if (msg.type === "dashboard") {
             applyDashboard(msg.data);
           } else if (msg.type === "tick") {
+            setLiveBtc(msg.btc);
+            setChainlinkError(null);
             const beat = priceToBeatRef.current;
             if (beat !== null && beat > 0) {
               const pct = btcVsBeatPct(msg.btc, beat);
@@ -125,8 +157,6 @@ export function useDashboard(active: boolean) {
                 btcChange: pct.toFixed(2),
                 isUp: msg.btc >= beat,
               }));
-            } else {
-              setSignals((prev) => ({ ...prev, btc: msg.btc }));
             }
           } else if (msg.type === "connected") {
             setWsConnected(true);
@@ -139,16 +169,25 @@ export function useDashboard(active: boolean) {
       };
 
       ws.onclose = () => {
+        if (wsRef.current === ws) wsRef.current = null;
         if (!cancelled) {
           setWsConnected(false);
-          setTimeout(connect, 3000);
+          scheduleReconnect();
         }
       };
 
-      ws.onerror = () => ws.close();
+      // onclose fires after errors — do not call ws.close() here (causes EPIPE warnings).
+      ws.onerror = null;
     };
 
-    connect();
+    void fetchDashboard()
+      .then((data) => {
+        if (!cancelled) applyDashboard(data);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) connect();
+      });
 
     fallbackTimer = setInterval(async () => {
       if (wsRef.current?.readyState === WebSocket.OPEN) return;
@@ -164,9 +203,11 @@ export function useDashboard(active: boolean) {
 
     return () => {
       cancelled = true;
-      wsRef.current?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      disposeWebSocket(wsRef.current);
       wsRef.current = null;
       if (fallbackTimer) clearInterval(fallbackTimer);
+      setWsConnected(false);
     };
   }, [active, applyDashboard]);
 
@@ -227,10 +268,10 @@ export function useDashboard(active: boolean) {
     }
   }, []);
 
-  const updateCopyBudgetPct = useCallback(async (budgetPct: number) => {
-    setCopyTrade((prev) => ({ ...prev, settings: { ...prev.settings, budgetPct } }));
+  const updateCopyMirrorPct = useCallback(async (mirrorPct: number) => {
+    setCopyTrade((prev) => ({ ...prev, settings: { ...prev.settings, mirrorPct } }));
     try {
-      await updateCopySettingsApi({ budgetPct });
+      await updateCopySettingsApi({ mirrorPct });
     } catch {
       // Re-sync on next dashboard message
     }
@@ -295,6 +336,8 @@ export function useDashboard(active: boolean) {
     copying,
     priceToBeat,
     btcVsBeatPct: btcVsBeatPctState,
+    liveBtc,
+    chainlinkError,
     demoMode,
     demoBalance,
     canTradeLive,
@@ -305,7 +348,7 @@ export function useDashboard(active: boolean) {
     toggleDemoMode,
     toggleAutoCopy,
     updateCopyBetSize,
-    updateCopyBudgetPct,
+    updateCopyMirrorPct,
     updateCopyTarget,
     copyNow,
   };

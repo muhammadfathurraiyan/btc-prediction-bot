@@ -101,7 +101,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       const body = await readJsonBody<{
         enabled?: boolean;
         betSize?: number;
-        budgetPct?: number;
+        mirrorPct?: number;
         targetAddress?: string;
       }>(req);
 
@@ -118,7 +118,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse) {
       const settings = updateCopySettings({
         enabled: body.enabled,
         betSize: body.betSize,
-        budgetPct: body.budgetPct,
+        mirrorPct: body.mirrorPct,
         targetAddress,
       });
       sendJson(res, 200, { settings });

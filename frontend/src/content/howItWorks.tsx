@@ -42,23 +42,31 @@ export function CopyTradeHowItWorksContent() {
     <>
       <DialogSection title="What it does">
         <p className="m-0">
-          Mirrors target transactions on the current BTC 5m window (each tx once). Copy size follows
-          their USDC amount, scaled down when your balance cannot cover the full batch — not a blind
-          100% mirror. Max per copy caps each trade; Copy budget % caps total spend per run.
+          Mirrors target transactions on the current BTC 5m window (each tx once). Copy size mirrors
+          their <strong>risk percentage</strong>, not their dollar amount — if they risk 2% of a $1,500
+          account ($30), you risk 2% of yours ($3 on a $150 account).
+        </p>
+      </DialogSection>
+      <DialogSection title="Proportional formula">
+        <p className="m-0">
+          Your copy = their trade × (your account ÷ their account) × Mirror %. Example: they buy $500
+          on a $1,500 account and you have $150 → you buy $50 at 100% mirror. Gains and losses stay
+          proportional.
         </p>
       </DialogSection>
       <DialogSection title="Target wallet">
         <p className="m-0">
           Trades are read from Polymarket&apos;s Data API (maker + taker fills, filtered by event).
-          If they place 9 trades, you copy up to 9 (when balance allows). BUY Up → you buy UP at
-          their $ size; SELL Up → you buy DOWN at their $ size.
+          BUY Up → you buy UP; SELL Up → you buy DOWN (mirrored as a buy). Their account size is
+          auto-detected from open positions plus on-chain collateral; if unavailable, it is estimated
+          from their trade size.
         </p>
       </DialogSection>
-      <DialogSection title="Balance sizing">
+      <DialogSection title="Mirror % &amp; caps">
         <p className="m-0">
-          A reserve (10% or $5, whichever is higher) stays untouched. Copy budget % applies to the
-          rest. Pending trades share that budget proportionally to their target sizes. If they spent
-          $80 and your budget is $30, each copy is ~37.5% of their size.
+          Mirror % tunes how much of the proportional size to take (1–100%). Max per copy caps each
+          trade. A reserve (10% or $5) stays untouched; if pending copies exceed spendable balance,
+          the batch scales down together.
         </p>
       </DialogSection>
       <DialogSection title="Auto-copy">

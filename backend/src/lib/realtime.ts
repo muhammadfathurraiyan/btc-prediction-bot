@@ -2,8 +2,7 @@ import type { Server } from "node:http";
 import { WebSocket, WebSocketServer } from "ws";
 import { getLiveChainlinkBtcUsd, startChainlinkFeed } from "./chainlinkPrice.js";
 import { buildDashboardSnapshot } from "./dashboard.js";
-import { applyLiveChainlinkOverlay } from "./liveBtcOverlay.js";
-import { clearPriceToBeatCache } from "./priceToBeat.js";
+import { clearPriceToBeatCache, recordWindowOpenPrice } from "./priceToBeat.js";
 import { getCurrentWindowStart } from "./market.js";
 
 const BROADCAST_MS = 2000;
@@ -25,16 +24,6 @@ function broadcast(payload: unknown): void {
 async function broadcastDashboard(): Promise<void> {
   try {
     const data = await buildDashboardSnapshot(true);
-    const liveBtc = getLiveChainlinkBtcUsd();
-
-    if (liveBtc !== null && data.signals) {
-      const overlay = applyLiveChainlinkOverlay(data.signals, data.priceToBeat);
-      data.signals = overlay.signals;
-      if (overlay.btcVsBeatPct !== null) {
-        data.btcVsBeatPct = overlay.btcVsBeatPct;
-      }
-    }
-
     broadcast({ type: "dashboard", data });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Dashboard broadcast failed";
@@ -63,6 +52,9 @@ export function attachRealtime(server: Server): void {
       const windowStart = getCurrentWindowStart();
       if (lastWindowStart !== null && windowStart !== lastWindowStart) {
         clearPriceToBeatCache();
+      }
+      if (windowStart !== lastWindowStart) {
+        recordWindowOpenPrice(windowStart, liveBtc);
       }
       lastWindowStart = windowStart;
 
